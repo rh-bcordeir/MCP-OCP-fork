@@ -70,6 +70,16 @@ def _get_cluster_version_obj() -> Dict[str, Any]:
     )
 
 
+def _channel_from_version(version: str) -> str:
+    """
+    Derives the stable channel name from a semantic version (e.g. '4.19.24' -> 'stable-4.19').
+    """
+    parts = version.strip().split(".")
+    if len(parts) >= 2:
+        return f"stable-{parts[0]}.{parts[1]}"
+    return f"stable-{version}"
+
+
 def _summarize_clusterversion(cv: Dict[str, Any]) -> str:
     status = cv.get("status", {})
     desired = cv.get("spec", {}).get("desiredUpdate", {}) or {}
@@ -248,14 +258,21 @@ def listar_pods(namespace: str) -> str:
 @mcp.tool()
 def iniciar_upgrade_openshift(version: str, image: Optional[str] = None) -> str:
     """
-    Starts an OpenShift cluster upgrade by setting ClusterVersion.spec.desiredUpdate.
+    Starts an OpenShift cluster upgrade by setting ClusterVersion.spec.channel and
+    spec.desiredUpdate. The channel is derived from the target version (e.g. 4.19.24 -> stable-4.19).
     Args:
         version: target version (example: '4.14.25')
         image: optional release image pullspec (advanced; usually omit)
     Notes:
         Requires RBAC permission to patch clusterversions.config.openshift.io 'version'.
     """
-    body: Dict[str, Any] = {"spec": {"desiredUpdate": {"version": version}}}
+    channel = _channel_from_version(version)
+    body: Dict[str, Any] = {
+        "spec": {
+            "channel": channel,
+            "desiredUpdate": {"version": version},
+        }
+    }
     if image:
         body["spec"]["desiredUpdate"]["image"] = image
 
