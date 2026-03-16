@@ -21,11 +21,11 @@ O fluxo é simples: **Cliente (IA) → Servidor MCP → API do OpenShift**.
 ## 🏗️ Arquitetura
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
 │  Cliente (IA)   │────▶│  Servidor MCP    │────▶│  OpenShift API  │
-│  Claude/GPT/    │     │  (server-gpt.py) │     │  (Kubernetes)   │
+│  Claude/GPT/    │      │  (server-gpt.py) │      │  (Kubernetes)   │
 │  Llama, etc.    │◀────│                  │◀────│                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+└─────────────────┘      └──────────────────┘      └─────────────────┘
 ```
 
 1. **Cliente** — Envia solicitações em linguagem natural (ex.: Claude Desktop ou `client-gpt.py`)
