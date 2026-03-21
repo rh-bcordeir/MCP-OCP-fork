@@ -104,13 +104,55 @@ oc get route agent-console -n remediation-app -o jsonpath='{.spec.host}{"\n"}'
 
 Open the Route in a browser → **Auto Remediate** → confirm SSE log streaming (nginx: `proxy_buffering off`, long `proxy_read_timeout`).
 
+## Where LLM / AI credentials live (OpenShift)
+
+Credentials are **not** stored in the image. Put them in a **Kubernetes Secret** in the **same namespace** as `remediation-api` (e.g. `remediation-app`), then expose them to the pod as **environment variables** via `valueFrom.secretKeyRef`.
+
+The API reads (see `remediation-api/app/services/remediation_runner.py`):
+
+| Variable (any one pair) | Purpose |
+|-------------------------|--------|
+| `GRANITE_API_BASE` or `OPENAI_BASE_URL` | OpenAI-compatible API base URL |
+| `GRANITE_API_TOKEN` or `OPENAI_API_KEY` | Bearer / API key |
+| `LLM_MODEL` | Optional model id (default `granite-8b`) |
+
+**1. Create the Secret** (pick one approach):
+
+```bash
+oc create secret generic remediation-llm-credentials \
+  --from-literal=GRANITE_API_BASE='https://your-llm.apps.../v1' \
+  --from-literal=GRANITE_API_TOKEN='your-token' \
+  -n remediation-app
+```
+
+Or edit and apply [`examples/llm-credentials-secret.yaml`](examples/llm-credentials-secret.yaml) (replace placeholders; do not commit real secrets).
+
+**2. Reference it on the Deployment** — add under `containers[0].env` in [`31-deployment-remediation-api.yaml`](31-deployment-remediation-api.yaml):
+
+```yaml
+            - name: GRANITE_API_BASE
+              valueFrom:
+                secretKeyRef:
+                  name: remediation-llm-credentials
+                  key: GRANITE_API_BASE
+            - name: GRANITE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: remediation-llm-credentials
+                  key: GRANITE_API_TOKEN
+            - name: LLM_MODEL
+              value: "granite-8b"
+```
+
+**3. Re-apply** (or patch): `oc apply -f ...` / Ansible deploy.
+
+For GitOps, prefer **Sealed Secrets**, **External Secrets Operator**, or **Vault** instead of plain YAML with `stringData` in git.
+
+**Ansible:** the deploy playbook can create the Secret from extra-vars **or**, if the Secret already exists, only run `oc set env … --from=secret/…` with `-e remediation_llm_from_existing_secret=true` (see [`deploy/ansible/README.md`](../ansible/README.md)).
+
 ## Optional: LLM env suggestions
 
-Create a **Secret** (or use **SealedSecrets** / External Secrets) and mount env on `remediation-api`:
-
-- `GRANITE_API_BASE` / `OPENAI_BASE_URL`
-- `GRANITE_API_TOKEN` / `OPENAI_API_KEY`
-- `LLM_MODEL` (optional)
+Same variables as above; only the **storage** changes (Secret vs SealedSecret / ESO).
 
 ## Dual-Route topology (not recommended)
 

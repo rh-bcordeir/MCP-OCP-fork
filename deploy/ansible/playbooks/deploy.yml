@@ -14,6 +14,9 @@
 #   ansible-playbook playbooks/deploy.yml -e remediation_ocp_build=true
 # Or build with podman (--tags build), push if needed, then deploy.
 #
+# LLM Secret already in namespace: wire env only
+#   ansible-playbook playbooks/deploy.yml -e remediation_llm_from_existing_secret=true
+#
 # hosts: localhost = machine where Ansible runs (your laptop or a bastion).
 # OpenShift is the *API target* via oc/kubectl + KUBECONFIG — workloads are not executed on localhost.
 #
@@ -33,6 +36,17 @@
     # After on-cluster build, same image tag (:latest) needs a new rollout; also clears "progress deadline exceeded"
     # from a previous failed rollout. Set true manually if rollout status fails immediately: -e remediation_rollout_restart=true
     remediation_rollout_restart: false
+
+    # Optional LLM Secret (never commit real values — use -e, vault, or CI secrets)
+    remediation_llm_secret_name: remediation-llm-credentials
+    remediation_llm_granite_base: ""
+    remediation_llm_granite_token: ""
+    remediation_llm_openai_base: ""
+    remediation_llm_openai_key: ""
+    remediation_llm_model: ""
+    remediation_llm_wire_deployment: true
+    # If Secret already exists in the namespace (e.g. oc create secret …), only wire env into the Deployment
+    remediation_llm_from_existing_secret: false
 
     openshift_manifest_dir: "{{ playbook_dir }}/../../openshift"
     # ansible_env is unset when gather_facts: false; use env lookup (fallback /tmp for CI)
@@ -105,6 +119,135 @@
       changed_when: >-
         'created' in remediation_apply_all.stdout
         or 'configured' in remediation_apply_all.stdout
+
+    # --- Optional: LLM credentials Secret + wire into remediation-api (same namespace) ---
+    - name: Create or update LLM Secret (GRANITE_API_*)
+      vars:
+        _b: "{{ remediation_llm_granite_base | default('', true) | trim }}"
+        _t: "{{ remediation_llm_granite_token | default('', true) | trim }}"
+      when:
+        - _b | length > 0
+        - _t | length > 0
+      no_log: true
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          export GRANITE_API_BASE='{{ _b | regex_replace("'", "'\\''") }}'
+          export GRANITE_API_TOKEN='{{ _t | regex_replace("'", "'\\''") }}'
+          {{ remediation_oc }} create secret generic "{{ remediation_llm_secret_name }}" \
+            --from-literal=GRANITE_API_BASE="$GRANITE_API_BASE" \
+            --from-literal=GRANITE_API_TOKEN="$GRANITE_API_TOKEN" \
+            -n "{{ remediation_namespace }}" \
+            --dry-run=client -o yaml | {{ remediation_oc }} apply -f -
+        executable: /bin/bash
+      register: remediation_llm_secret_granite
+      changed_when: "'configured' in remediation_llm_secret_granite.stdout or 'created' in remediation_llm_secret_granite.stdout"
+
+    - name: Create or update LLM Secret (OPENAI_* — if Granite vars not set)
+      vars:
+        _b: "{{ remediation_llm_openai_base | default('', true) | trim }}"
+        _k: "{{ remediation_llm_openai_key | default('', true) | trim }}"
+        _gb: "{{ remediation_llm_granite_base | default('', true) | trim }}"
+        _gt: "{{ remediation_llm_granite_token | default('', true) | trim }}"
+      when:
+        - _b | length > 0
+        - _k | length > 0
+        - (_gb | length == 0) or (_gt | length == 0)
+      no_log: true
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          export OPENAI_BASE_URL='{{ _b | regex_replace("'", "'\\''") }}'
+          export OPENAI_API_KEY='{{ _k | regex_replace("'", "'\\''") }}'
+          {{ remediation_oc }} create secret generic "{{ remediation_llm_secret_name }}" \
+            --from-literal=OPENAI_BASE_URL="$OPENAI_BASE_URL" \
+            --from-literal=OPENAI_API_KEY="$OPENAI_API_KEY" \
+            -n "{{ remediation_namespace }}" \
+            --dry-run=client -o yaml | {{ remediation_oc }} apply -f -
+        executable: /bin/bash
+      register: remediation_llm_secret_openai
+      changed_when: "'configured' in remediation_llm_secret_openai.stdout or 'created' in remediation_llm_secret_openai.stdout"
+
+    - name: Verify LLM Secret exists (when using existing secret)
+      when: remediation_llm_from_existing_secret | bool
+      ansible.builtin.command:
+        cmd: "{{ remediation_oc }} get secret {{ remediation_llm_secret_name }} -n {{ remediation_namespace }} -o name"
+      register: remediation_llm_secret_check
+      changed_when: false
+      failed_when: false
+
+    - name: List available Secrets (if LLM Secret not found)
+      when:
+        - remediation_llm_from_existing_secret | bool
+        - remediation_llm_secret_check.rc != 0
+      ansible.builtin.command:
+        cmd: "{{ remediation_oc }} get secrets -n {{ remediation_namespace }} -o custom-columns=NAME:.metadata.name --no-headers | grep -i llm || echo '(no secrets matching llm)'"
+      register: remediation_llm_secrets_list
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if LLM Secret not found
+      when:
+        - remediation_llm_from_existing_secret | bool
+        - remediation_llm_secret_check.rc != 0
+      ansible.builtin.fail:
+        msg: |
+          Secret "{{ remediation_llm_secret_name }}" not found in namespace "{{ remediation_namespace }}".
+
+          Available secrets (matching 'llm'):
+          {{ remediation_llm_secrets_list.stdout | default('(none found)') }}
+
+          Create the Secret first:
+            oc create secret generic {{ remediation_llm_secret_name }} \
+              --from-literal=GRANITE_API_BASE='https://...' \
+              --from-literal=GRANITE_API_TOKEN='...' \
+              -n {{ remediation_namespace }}
+
+          Or pass credentials to Ansible to create it:
+            ansible-playbook playbooks/deploy.yml \
+              -e remediation_llm_granite_base='...' \
+              -e remediation_llm_granite_token='...'
+
+          Or adjust the secret name: -e remediation_llm_secret_name=your-secret-name
+
+    - name: Import LLM env from Secret into remediation-api Deployment
+      when:
+        - remediation_llm_wire_deployment | bool
+        - (not ((remediation_llm_secret_granite.skipped | default(false)) and (remediation_llm_secret_openai.skipped | default(false)))) or (remediation_llm_from_existing_secret | bool)
+      ansible.builtin.command:
+        cmd: >-
+          {{ remediation_oc }} set env deployment/remediation-api
+          --from=secret/{{ remediation_llm_secret_name }}
+          -n {{ remediation_namespace }}
+      register: remediation_llm_set_env
+      changed_when: remediation_llm_set_env.rc == 0
+      failed_when: false
+
+    - name: Fail if oc set env failed
+      when:
+        - remediation_llm_set_env is defined
+        - not (remediation_llm_set_env.skipped | default(false))
+        - remediation_llm_set_env.rc | default(0) != 0
+      ansible.builtin.fail:
+        msg: |
+          Failed to wire Secret "{{ remediation_llm_secret_name }}" into deployment/remediation-api.
+
+          Error: {{ remediation_llm_set_env.stderr | default(remediation_llm_set_env.msg) }}
+
+          Verify:
+            - Secret exists: {{ remediation_oc }} get secret {{ remediation_llm_secret_name }} -n {{ remediation_namespace }}
+            - Deployment exists: {{ remediation_oc }} get deployment remediation-api -n {{ remediation_namespace }}
+            - Secret has expected keys (GRANITE_API_BASE, GRANITE_API_TOKEN, or OPENAI_*): {{ remediation_oc }} describe secret {{ remediation_llm_secret_name }} -n {{ remediation_namespace }}
+
+    - name: Set LLM_MODEL on remediation-api (optional)
+      when: remediation_llm_model | default('', true) | trim | length > 0
+      ansible.builtin.command:
+        cmd: >-
+          {{ remediation_oc }} set env deployment/remediation-api
+          LLM_MODEL={{ remediation_llm_model | trim }}
+          -n {{ remediation_namespace }}
+      register: remediation_llm_model_env
+      changed_when: remediation_llm_model_env.rc == 0
 
     # Populate ImageStreams before rollout (internal registry — no Docker Hub)
     - name: Build remediation-api ImageStream (oc start-build --from-dir)

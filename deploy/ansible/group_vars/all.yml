@@ -14,3 +14,14 @@ remediation_ocp_build: false
 
 # If rollout status fails with "progress deadline exceeded", set true once (or oc rollout restart …)
 remediation_rollout_restart: false
+
+# Optional LLM Secret (leave empty; pass via -e @vault.yml or CI — never commit tokens)
+# remediation_llm_secret_name: remediation-llm-credentials
+# remediation_llm_granite_base: ""
+# remediation_llm_granite_token: ""
+# remediation_llm_openai_base: ""
+# remediation_llm_openai_key: ""
+# remediation_llm_model: ""
+# remediation_llm_wire_deployment: true
+# Secret already in the project? Only run oc set env from it:
+# remediation_llm_from_existing_secret: true

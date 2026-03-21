@@ -29,11 +29,17 @@ spec:
           env:
             - name: REMEDIATION_PROJECT_ROOT
               value: "/app"
-            # Optional LLM (remediate_use_llm / suggest env)
+            # Optional LLM — create Secret remediation-llm-credentials (see README + examples/llm-credentials-secret.yaml)
             # - name: GRANITE_API_BASE
-            #   valueFrom: secretKeyRef: ...
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: remediation-llm-credentials
+            #       key: GRANITE_API_BASE
             # - name: GRANITE_API_TOKEN
-            #   valueFrom: secretKeyRef: ...
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: remediation-llm-credentials
+            #       key: GRANITE_API_TOKEN
             # Dual-Route UI: comma-separated origins
             # - name: REMEDIATION_CORS_ORIGINS
             #   value: "https://agent-console-remediation-app.apps.example.com"

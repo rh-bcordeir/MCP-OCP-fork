@@ -21,6 +21,52 @@ cd deploy/ansible
 ansible-playbook playbooks/deploy.yml
 ```
 
+**LLM / AI credentials (optional):** if you pass both base URL and token, the playbook creates/updates a Secret and runs `oc set env deployment/remediation-api --from=secret/…` (no secrets in git):
+
+```bash
+ansible-playbook playbooks/deploy.yml \
+  -e remediation_llm_granite_base='https://your-llm-route.../v1' \
+  -e remediation_llm_granite_token='your-token' \
+  -e remediation_llm_model='granite-8b'
+```
+
+Or OpenAI-style names: `remediation_llm_openai_base` + `remediation_llm_openai_key` (used only if Granite pair is not set). Disable wiring: `-e remediation_llm_wire_deployment=false`. See [`deploy/openshift/README.md`](../openshift/README.md) and [`examples/llm-credentials-secret.yaml`](../openshift/examples/llm-credentials-secret.yaml).
+
+**Secret already created** (e.g. `GRANITE_API_BASE` / `GRANITE_API_TOKEN` are already in the cluster): do **not** pass base/token to Ansible. Only attach that Secret to `remediation-api`:
+
+```bash
+ansible-playbook playbooks/deploy.yml \
+  -e remediation_llm_from_existing_secret=true \
+  -e remediation_llm_secret_name=remediation-llm-credentials
+```
+
+Adjust `remediation_llm_secret_name` if your Secret has another name. Optional model: `-e remediation_llm_model=granite-8b`.
+
+**If the Secret doesn't exist**, the playbook will fail with a helpful error listing available secrets. Create it first:
+
+```bash
+oc create secret generic remediation-llm-credentials \
+  --from-literal=GRANITE_API_BASE='https://your-llm-route.../v1' \
+  --from-literal=GRANITE_API_TOKEN='your-token' \
+  -n remediation-app
+```
+
+Or let Ansible create it by passing the credentials as extra-vars (see above).
+
+### Does `remediation-api` actually have the Secret as env?
+
+The checked-in Deployment YAML only has `REMEDIATION_PROJECT_ROOT`; LLM keys are **not** in git unless you uncomment `secretKeyRef` in `31-deployment-remediation-api.yaml`. When Ansible runs `oc set env deployment/remediation-api --from=secret/…`, OpenShift **patches the live Deployment** so the pod spec includes `valueFrom.secretKeyRef` for each key in that Secret.
+
+Verify on the cluster:
+
+```bash
+oc get deployment remediation-api -n remediation-app -o jsonpath='{range .spec.template.spec.containers[0].env[*]}{.name}{"\t"}{.valueFrom.secretKeyRef.name}{"/"}{.valueFrom.secretKeyRef.key}{"\n"}{end}'
+```
+
+You should see lines like `GRANITE_API_BASE    remediation-llm-credentials/GRANITE_API_BASE` (empty lines are plain `value:` env vars). If there is no `secretKeyRef` output for Granite/OpenAI keys, the wire step did not run or failed — re-run with the LLM extra-vars above.
+
+**Rollout “progress deadline exceeded”** usually means the pod is **CrashLoop**, **ImagePullBackOff**, or failing probes — not necessarily missing Secret. Check: `oc get pods -n remediation-app`, `oc logs deployment/remediation-api -n remediation-app`, `oc describe pod -l app.kubernetes.io/name=remediation-api -n remediation-app`.
+
 **Start on-cluster image builds with Ansible** (runs `oc start-build … --from-dir` for both apps after manifests are applied, before rollout):
 
 ```bash
@@ -85,7 +131,8 @@ ansible-playbook playbooks/deploy.yml
 3. Runs `oc apply -f` / `kubectl apply -f` on each staged file (same order as file name prefixes).
 4. Optionally runs `oc set image` on both Deployments and waits for rollout.
 5. If `remediation_ocp_build: true`, runs `oc start-build` for **remediation-api** and **agent-console** (`--from-dir` repo root) into the project ImageStreams.
-6. Prints the **agent-console** Route host when `oc get route` succeeds.
+6. If LLM extra-vars are set, creates/updates Secret `remediation_llm_secret_name` and optionally `oc set env deployment/remediation-api --from=secret/…`.
+7. Prints the **agent-console** Route host when `oc get route` succeeds.
 
 ## Configuration files
 
