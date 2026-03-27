@@ -145,7 +145,8 @@ ansible-playbook playbooks/deploy.yml
 
 ## Troubleshooting
 
-- **`rollout status` / "exceeded its progress deadline" in ~1s**: The Deployment was **already** in a failed rollout state; `rollout status` exits immediately. Run once: `-e remediation_rollout_restart=true` (or `oc rollout restart deployment/remediation-api deployment/agent-console -n <ns>`), then re-run the playbook. With `-e remediation_ocp_build=true`, a restart is done automatically after builds.
+- **`rollout status` / "exceeded its progress deadline" in ~1s**: The Deployment was **already** in a failed rollout state; `rollout status` exits immediately. Run once: `-e remediation_rollout_restart=true` (or `oc rollout restart …`), then re-run the playbook. With `-e remediation_ocp_build=true`, a restart is done automatically after builds.
+- **`can't restart paused deployment`**: The Deployment has `spec.paused: true`. Run `oc rollout resume deployment/<name> -n <ns>` before `rollout restart`, or use the current playbook (it runs **resume** before **restart** when using `remediation_rollout_restart` / `remediation_ocp_build`).
 - **`Failed to import kubernetes`**: use the current `deploy.yml` (it runs `oc apply`, not `kubernetes.core.k8s`). Or install `pip install kubernetes` if you use an older playbook.
 - **Apply / RBAC errors**: `kubectl config current-context` / `oc whoami`, permissions to create ClusterRole and Route.
 - **Route apply fails on Kubernetes**: remove or replace `50-route-agent-console.yaml` for Ingress.

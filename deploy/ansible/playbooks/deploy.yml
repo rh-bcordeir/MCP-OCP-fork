@@ -63,6 +63,8 @@
       - 28-buildconfig-agent-console.yaml
       - 30-service-remediation-api.yaml
       - 31-deployment-remediation-api.yaml
+      - 32-service-mcp-server.yaml
+      - 33-deployment-mcp-server.yaml
       - 40-service-agent-console.yaml
       - 41-deployment-agent-console.yaml
       - 50-route-agent-console.yaml
@@ -293,6 +295,25 @@
       changed_when: "'image updated' in set_img_ui.stdout | lower or 'deployment.apps' in set_img_ui.stdout"
 
     # New image at same tag does not change the Deployment spec; restart forces pull + clears stuck Progressing=False.
+    # Paused deployments reject `rollout restart` — resume first (no-op if not paused).
+    - name: Resume remediation-api if rollout was paused
+      ansible.builtin.command:
+        cmd: "{{ remediation_oc }} rollout resume deployment/remediation-api -n {{ remediation_namespace }}"
+      when:
+        - remediation_set_images | bool
+        - (remediation_ocp_build | bool) or (remediation_rollout_restart | bool)
+      failed_when: false
+      changed_when: false
+
+    - name: Resume agent-console if rollout was paused
+      ansible.builtin.command:
+        cmd: "{{ remediation_oc }} rollout resume deployment/agent-console -n {{ remediation_namespace }}"
+      when:
+        - remediation_set_images | bool
+        - (remediation_ocp_build | bool) or (remediation_rollout_restart | bool)
+      failed_when: false
+      changed_when: false
+
     - name: Rollout restart remediation-api (after build or when forced)
       ansible.builtin.command:
         cmd: "{{ remediation_oc }} rollout restart deployment/remediation-api -n {{ remediation_namespace }}"
@@ -337,9 +358,14 @@
               If stderr was "exceeded its progress deadline", Kubernetes had already marked the last
               rollout failed — `oc rollout status` then returns in about one second (it does not wait the full timeout).
 
-              Fix and re-run this playbook:
-                {{ remediation_oc }} rollout restart deployment/remediation-api deployment/agent-console -n {{ remediation_namespace }}
-              Or one-time: ansible-playbook ... -e remediation_rollout_restart=true
+              Fix and re-run:
+                {{ remediation_oc }} rollout resume deployment/remediation-api -n {{ remediation_namespace }}
+                {{ remediation_oc }} rollout resume deployment/agent-console -n {{ remediation_namespace }}
+                {{ remediation_oc }} rollout restart deployment/remediation-api -n {{ remediation_namespace }}
+                {{ remediation_oc }} rollout restart deployment/agent-console -n {{ remediation_namespace }}
+              Or: ansible-playbook ... -e remediation_rollout_restart=true (playbook resumes paused deployments before restart).
+
+              If restart says "paused deployment": run rollout resume first (the playbook now does this automatically).
 
               Check logs:
                 {{ remediation_oc }} logs deployment/remediation-api -n {{ remediation_namespace }} --tail=80

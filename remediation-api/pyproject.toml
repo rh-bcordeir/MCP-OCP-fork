@@ -9,6 +9,8 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "kubernetes>=28.0.0",
     "openai>=1.0.0",
+    "mcp[cli]>=1.25.0",
+    "fastmcp",
 ]
 
 [tool.uv]

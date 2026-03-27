@@ -1,17 +1,40 @@
 """
 FastMCP server — registers tools implemented in openshift_tool_handlers.
+
+- MCP_TRANSPORT=stdio (default): for local `client-gpt.py server-gpt.py`
+- MCP_TRANSPORT=streamable-http: bind MCP_HTTP_HOST:MCP_HTTP_PORT, endpoint …/mcp (OpenShift Service)
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import os
 from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
 import openshift_tool_handlers as h
 
-mcp = FastMCP("DemoOpenShift")
+
+def _transport() -> str:
+    t = os.environ.get("MCP_TRANSPORT", "stdio").strip().lower()
+    if t in ("http", "streamable-http", "streamable_http"):
+        return "streamable-http"
+    if t == "sse":
+        return "sse"
+    return "stdio"
+
+
+def _bind() -> tuple[str, int]:
+    if _transport() == "stdio":
+        return ("127.0.0.1", 8000)
+    host = os.environ.get("MCP_HTTP_HOST", "0.0.0.0")
+    port = int(os.environ.get("MCP_HTTP_PORT", "9000"))
+    return (host, port)
+
+
+_h, _p = _bind()
+mcp = FastMCP("DemoOpenShift", host=_h, port=_p)
 
 
 @mcp.tool()
@@ -33,9 +56,9 @@ def listar_pods(namespace: str) -> str:
 
 
 @mcp.tool()
-def listar_pods_em_erro_cluster() -> str:
-    """Lists pods across all namespaces in problematic states."""
-    return h.listar_pods_em_erro_cluster()
+def listar_pods_em_erro_cluster(include_openshift_namespaces: bool = False) -> str:
+    """Lists pods in problematic states. By default skips openshift-*, kube-*, and default (app focus)."""
+    return h.listar_pods_em_erro_cluster(include_openshift_namespaces)
 
 
 @mcp.tool()
@@ -74,4 +97,4 @@ def obter_mcpreadme() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    mcp.run(transport=_transport())  # type: ignore[arg-type]

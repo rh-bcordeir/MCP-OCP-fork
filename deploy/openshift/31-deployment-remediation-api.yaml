@@ -29,6 +29,9 @@ spec:
           env:
             - name: REMEDIATION_PROJECT_ROOT
               value: "/app"
+            # Use FastMCP streamable HTTP to server-gpt (Deployment mcp-server). Uncomment after 32/33 manifests applied:
+            # - name: REMEDIATION_MCP_URL
+            #   value: "http://mcp-server.remediation-app.svc.cluster.local:9000/mcp"
             # Optional LLM — create Secret remediation-llm-credentials (see README + examples/llm-credentials-secret.yaml)
             # - name: GRANITE_API_BASE
             #   valueFrom:

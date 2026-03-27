@@ -117,6 +117,23 @@ _PROBLEM_POD_STATUS_RE = re.compile(
 )
 
 
+def _is_platform_namespace_for_listing(ns: str, *, include_openshift_namespaces: bool) -> bool:
+    """
+    True → skip pod (platform / non-application namespaces).
+
+    Matches remediation_workflow app-only policy: default, kube-*, openshift-* (unless flag).
+    """
+    if not ns:
+        return True
+    if ns == "default":
+        return True
+    if ns.startswith("kube-"):
+        return True
+    if not include_openshift_namespaces and ns.startswith("openshift-"):
+        return True
+    return False
+
+
 def _pod_has_errors(pod: client.V1Pod) -> bool:
     if not pod.status:
         return False
@@ -287,7 +304,13 @@ def listar_pods(namespace: str) -> str:
         return f"Failed to list pods in '{namespace}': {type(e).__name__}: {e}"
 
 
-def listar_pods_em_erro_cluster() -> str:
+def listar_pods_em_erro_cluster(include_openshift_namespaces: bool = False) -> str:
+    """
+    List problem-state pods cluster-wide.
+
+    By default excludes ``default``, ``kube-*``, and ``openshift-*`` (OpenShift-managed infra).
+    Pass ``include_openshift_namespaces=True`` to include openshift-*; kube-* and default stay excluded.
+    """
     try:
         v1 = _core_v1()
         pods = _list_all_pods_all_namespaces(v1)
@@ -296,6 +319,8 @@ def listar_pods_em_erro_cluster() -> str:
             if not _pod_matches_oc_problem_grep(p):
                 continue
             ns = p.metadata.namespace or "?"
+            if _is_platform_namespace_for_listing(ns, include_openshift_namespaces=include_openshift_namespaces):
+                continue
             name = p.metadata.name or "?"
             phase = p.status.phase if p.status else "?"
             summary = _pod_problem_status_summary(p)
@@ -307,11 +332,22 @@ def listar_pods_em_erro_cluster() -> str:
             )
         if not out:
             logger.info("listar_pods_em_erro_cluster: no problem pods matched")
-            return (
-                "No pods matched problem filter across the cluster "
-                "(Error, CrashLoop, ImagePull, ErrImage, Pending, Evicted, OOMKilled, CreateContainer)."
+            scope = (
+                "application namespaces (excludes default, kube-*, openshift-*)"
+                if not include_openshift_namespaces
+                else "application + openshift-* (still excludes default, kube-*)"
             )
-        header = f"Found {len(out)} pod(s) matching problem status filter (all namespaces):\n"
+            return (
+                f"No pods matched problem filter in {scope} "
+                "(Error, CrashLoop, ImagePull, ErrImage, Pending, Evicted, OOMKilled, CreateContainer). "
+                "Use include_openshift_namespaces=true to include openshift-* namespaces."
+            )
+        scope = (
+            "application namespaces (excludes default, kube-*, openshift-*)"
+            if not include_openshift_namespaces
+            else "namespaces including openshift-* (excludes default, kube-*)"
+        )
+        header = f"Found {len(out)} pod(s) matching problem status filter ({scope}):\n"
         logger.info("listar_pods_em_erro_cluster: returning %d problem pod(s)", len(out))
         return header + "\n".join(out)
     except ApiException as e:

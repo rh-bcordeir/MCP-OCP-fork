@@ -1,9 +1,13 @@
 """
-Runs remediation_workflow inside the API process (no uv run / no subprocess).
+Runs remediation_workflow inside the API process.
+
+- Default: in-process dispatch (openshift_tool_handlers.MCP_TOOL_DISPATCH).
+- REMEDIATION_MCP_URL set: FastMCP Client over streamable HTTP to server-gpt.py (e.g. mcp-server Service).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from typing import Callable, Optional
@@ -32,6 +36,21 @@ def _build_openai_client() -> OpenAI:
     return OpenAI(api_key=api_key)
 
 
+def _mcp_streamable_http_headers() -> Optional[dict[str, str]]:
+    raw = (os.environ.get("REMEDIATION_MCP_HTTP_HEADERS_JSON") or "").strip()
+    if raw:
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                "REMEDIATION_MCP_HTTP_HEADERS_JSON must be valid JSON object"
+            ) from e
+    bearer = (os.environ.get("REMEDIATION_MCP_BEARER_TOKEN") or "").strip()
+    if bearer:
+        return {"Authorization": f"Bearer {bearer}"}
+    return None
+
+
 async def execute_remediation_in_process(
     *,
     approve: bool,
@@ -45,20 +64,25 @@ async def execute_remediation_in_process(
     emit: Callable[[str], None] = print,
 ):
     """
-    Import shared workflow after path setup (kubernetes client loads from pod or KUBECONFIG).
+    Run CrashLoop remediation: either in-process tool dispatch or remote MCP (streamable HTTP).
+
+    Set REMEDIATION_MCP_URL to the MCP streamable HTTP endpoint (e.g.
+    http://mcp-server.<namespace>.svc.cluster.local:9000/mcp) to use server-gpt.py in-cluster.
     """
     ensure_basic_mcp_on_path()
     from remediation_workflow import (  # noqa: WPS433
+        FastMcpToolCaller,
         RemediationOptions,
         run_crashloop_remediation_async,
     )
 
+    mcp_url = (os.environ.get("REMEDIATION_MCP_URL") or "").strip()
+
     logger.info(
-        "execute_remediation_in_process approve=%s dry_run=%s openshift=%s allow_system_ns=%s",
+        "execute_remediation approve=%s dry_run=%s mcp_url=%s",
         approve,
         dry_run,
-        include_openshift_namespaces,
-        allow_system_namespaces,
+        "set" if mcp_url else "(in-process)",
     )
 
     opts = RemediationOptions(
@@ -72,9 +96,28 @@ async def execute_remediation_in_process(
         model=model or os.environ.get("LLM_MODEL", "granite-8b"),
     )
 
-    caller = InProcessOpenShiftToolCaller()
     oai = _build_openai_client()
 
+    if mcp_url:
+        from fastmcp import Client
+        from fastmcp.client.transports import StreamableHttpTransport
+
+        headers = _mcp_streamable_http_headers()
+        transport = StreamableHttpTransport(url=mcp_url, headers=headers)
+        async with Client(transport) as client:
+            try:
+                await client.ping()
+            except Exception as e:
+                logger.warning("MCP ping failed (continuing): %s", e)
+            caller = FastMcpToolCaller(client)
+            return await run_crashloop_remediation_async(
+                caller,
+                options=opts,
+                openai_client=oai,
+                emit=emit,
+            )
+
+    caller = InProcessOpenShiftToolCaller()
     return await run_crashloop_remediation_async(
         caller,
         options=opts,

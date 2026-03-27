@@ -1,13 +1,15 @@
 # Remediation API
 
-FastAPI service that runs the **CrashLoop remediation workflow in-process** (shared `remediation_workflow.py` + `openshift_tool_handlers.py`). **No `uv run` at request time** unless you opt into the legacy subprocess mode.
+FastAPI service that runs the **CrashLoop remediation workflow** via shared `remediation_workflow.py`. **No `uv run` at request time** unless you opt into the legacy subprocess mode.
 
 ## Architecture
 
-- **Default**: in-process MCP tool dispatch → same functions as `server-gpt.py` (see `docs/PRODUCTION_BACKEND_ARCHITECTURE.md`).
-- **Legacy**: set `REMEDIATION_USE_SUBPROCESS=1` to run  
-  `uv run python client-gpt.py server-gpt.py --workflow remediate --approve`  
-  (stdio MCP client + server as separate processes).
+- **Default**: in-process tool dispatch (`InProcessOpenShiftToolCaller` → `openshift_tool_handlers.MCP_TOOL_DISPATCH`) — same behaviour as `server-gpt.py` tools without MCP wire protocol.
+- **Remote MCP (OpenShift)**: set **`REMEDIATION_MCP_URL`** to the streamable HTTP endpoint of `server-gpt.py`, e.g.  
+  `http://mcp-server.<namespace>.svc.cluster.local:9000/mcp`  
+  The API then uses **`FastMcpToolCaller`** + **`fastmcp.Client(StreamableHttpTransport(...))`** so all tool calls go through real MCP (see `app/services/remediation_runner.py`).
+- **Legacy subprocess**: `REMEDIATION_USE_SUBPROCESS=1` on **`/start`** runs  
+  `uv run python client-gpt.py server-gpt.py --workflow remediate --approve` (stdio MCP).
 
 ## Why SSE?
 
@@ -28,22 +30,25 @@ Ensure `REMEDIATION_PROJECT_ROOT` points at the **basic-mcp** repo root if impor
 
 ## Environment
 
-| Variable | Description |
-|----------|-------------|
-| `REMEDIATION_PROJECT_ROOT` | Absolute path to **basic-mcp** (contains `openshift_tool_handlers.py`). |
-| `REMEDIATION_USE_SUBPROCESS` | `1` / `true` → legacy CLI subprocess instead of in-process. |
-| `REMEDIATION_API_PORT` | Used by `python -m app.main` (default `8787`). |
-| `KUBECONFIG`, `GRANITE_*`, `OPENAI_*`, `LLM_MODEL` | Same as CLI / cluster access. |
+| Variable                                           | Description                                                                                          |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `REMEDIATION_PROJECT_ROOT`                         | Absolute path to **basic-mcp** (contains `openshift_tool_handlers.py`).                              |
+| `REMEDIATION_MCP_URL`                              | If set, use FastMCP HTTP client to this URL (streamable HTTP `/mcp`); otherwise in-process dispatch. |
+| `REMEDIATION_MCP_BEARER_TOKEN`                     | Optional `Authorization: Bearer …` for the MCP HTTP endpoint.                                        |
+| `REMEDIATION_MCP_HTTP_HEADERS_JSON`                | Optional extra headers JSON object (overrides bearer if both set for Authorization).                 |
+| `REMEDIATION_USE_SUBPROCESS`                       | `1` / `true` → legacy CLI subprocess instead of in-process.                                          |
+| `REMEDIATION_API_PORT`                             | Used by `python -m app.main` (default `8787`).                                                       |
+| `KUBECONFIG`, `GRANITE_*`, `OPENAI_*`, `LLM_MODEL` | Same as CLI / cluster access.                                                                        |
 
 ## API
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/remediation/health` | Liveness |
-| `GET` | `/api/remediation/status` | `{ idle, activeSessionId }` |
-| `POST` | `/api/remediation/start` | Start run (in-process by default); returns `{ sessionId }` or **409** |
-| `POST` | `/api/remediation/execute` | JSON body: **`approved`** / **`dry_run`**, optional **`allow_system_namespaces`**, **`include_openshift_namespaces`**, `namespace`, `pod`; then stream |
-| `GET` | `/api/remediation/stream/{sessionId}` | SSE: JSON events |
+| Method | Path                                  | Description                                                                                                                                            |
+| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/api/remediation/health`             | Liveness                                                                                                                                               |
+| `GET`  | `/api/remediation/status`             | `{ idle, activeSessionId }`                                                                                                                            |
+| `POST` | `/api/remediation/start`              | Start run (in-process by default); returns `{ sessionId }` or **409**                                                                                  |
+| `POST` | `/api/remediation/execute`            | JSON body: **`approved`** / **`dry_run`**, optional **`allow_system_namespaces`**, **`include_openshift_namespaces`**, `namespace`, `pod`; then stream |
+| `GET`  | `/api/remediation/stream/{sessionId}` | SSE: JSON events                                                                                                                                       |
 
 ### `POST /api/remediation/execute` body
 

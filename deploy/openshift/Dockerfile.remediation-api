@@ -13,11 +13,14 @@ WORKDIR /app/remediation-api
 
 # Monorepo root files (must match REMEDIATION_PROJECT_ROOT in Deployment, default /app)
 COPY --chmod=0644 openshift_tool_handlers.py remediation_workflow.py /app/
+COPY --chmod=0644 server-gpt.py /app/server-gpt.py
 # 0755 required for directories: 0644 dirs are not traversable → "Could not import module app.main"
 COPY --chmod=0755 remediation-api /app/remediation-api
 
 RUN pip install --upgrade pip && \
     pip install \
+    "mcp[cli]>=1.25.0" \
+    "fastmcp" \
     "fastapi>=0.115.0" \
     "uvicorn[standard]>=0.32.0" \
     "kubernetes>=28.0.0" \

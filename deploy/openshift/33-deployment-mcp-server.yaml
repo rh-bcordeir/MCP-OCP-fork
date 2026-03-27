@@ -1,0 +1,45 @@
+# FastMCP (server-gpt.py) streamable-http — tools match remediation-api in-process contract.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server
+  namespace: remediation-app
+  labels:
+    app.kubernetes.io/name: mcp-server
+    app.kubernetes.io/part-of: remediation-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mcp-server
+        app.kubernetes.io/part-of: remediation-stack
+    spec:
+      serviceAccountName: remediation-api
+      containers:
+        - name: mcp
+          image: image-registry.openshift-image-registry.svc:5000/remediation-app/remediation-api:latest
+          imagePullPolicy: Always
+          command: ["python", "/app/server-gpt.py"]
+          env:
+            - name: REMEDIATION_PROJECT_ROOT
+              value: "/app"
+            - name: MCP_TRANSPORT
+              value: streamable-http
+            - name: MCP_HTTP_HOST
+              value: "0.0.0.0"
+            - name: MCP_HTTP_PORT
+              value: "9000"
+          ports:
+            - containerPort: 9000
+              name: mcp
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi

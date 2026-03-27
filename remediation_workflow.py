@@ -278,7 +278,10 @@ async def run_crashloop_remediation_async(
     await _emit(emit, "\n=== Workflow: CrashLoop remediation (MCP + logic) ===\n")
 
     try:
-        res = await tool_caller.call_tool(TOOL_LIST_PODS_ERROR, {})
+        res = await tool_caller.call_tool(
+            TOOL_LIST_PODS_ERROR,
+            {"include_openshift_namespaces": options.include_openshift_namespaces},
+        )
         raw = extract_text(res)
     except Exception as e:
         logger.exception("listar_pods_em_erro_cluster failed: %s", e)
@@ -436,7 +439,7 @@ async def run_crashloop_remediation_async(
 
 
 class FastMcpToolCaller:
-    """Adapter: fastmcp Client -> ToolCaller (stdio MCP server subprocess)."""
+    """Adapter: fastmcp Client -> ToolCaller (stdio subprocess or streamable HTTP to server-gpt)."""
 
     def __init__(self, client: Any) -> None:
         self._client = client
